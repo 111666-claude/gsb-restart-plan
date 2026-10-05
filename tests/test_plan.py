@@ -4,22 +4,22 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from plan import build_plan, render  # noqa: E402
+from plan import Planner  # noqa: E402
 
 
-class PlanTest(unittest.TestCase):
-    def test_single_server_plan(self):
-        plan, skipped = build_plan([("srv-a", "shard-1", True)], 3)
-        self.assertEqual(plan, [["srv-a"]])
-        self.assertEqual(skipped, [])
+class PlannerTest(unittest.TestCase):
+    def test_queued_counts_only_confirmed(self):
+        book = Planner(2, 1, 1000)
+        book.register("r1", "srv-a", "shard-1", True)
+        book.register("r2", "srv-b", "shard-1", False)
+        self.assertEqual(book.queued(), ["srv-a"])
 
-    def test_render_has_summary_line(self):
-        text = render([["srv-a"]], ["srv-b"])
-        self.assertIn("batch-0: srv-a", text)
-        self.assertIn("skipped=srv-b", text)
+    def test_stats_has_expected_keys(self):
+        book = Planner(2, 1, 1000)
+        self.assertEqual(sorted(book.stats()), ["batches", "current", "deferred", "done", "skipped"])
 
-    def test_empty_plan_renders_summary(self):
-        self.assertEqual(render([], []), "skipped=\n")
+    def test_scanned_starts_at_zero(self):
+        self.assertEqual(Planner(2, 1, 1000).scanned, 0)
 
 
 if __name__ == "__main__":

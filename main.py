@@ -1,20 +1,19 @@
-"""重启计划入口：跑样例并把计划写进 out/plan.txt。"""
+"""滚动重启入口：跑样例并把计划写进 out/plan.txt。"""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan import build_plan, render  # noqa: E402
+from plan import Planner  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def servers(count, confirmed=3):
-    out = []
+def seed(book, count, confirmed=None):
     for index in range(count):
-        out.append(("srv-%03d" % index, "shard-%d" % (index % 2), index < confirmed))
-    return out
+        ok = True if confirmed is None else index < confirmed
+        book.register("r-%d" % index, "srv-%03d" % index, "shard-%d" % (index % 2), ok)
 
 
 def write(path, text):
@@ -27,30 +26,39 @@ def write(path, text):
 
 def main(argv=None):
     name = (argv or sys.argv[1:])[:1]
-    sample = name[0] if name else "--sample=batch"
-    if sample == "--sample=batch":
-        plan, skipped = build_plan(servers(8, confirmed=8), 3)
-        print("batches=%d skipped=%d" % (len(plan), len(skipped)))
+    sample = name[0] if name else "--sample=quota"
+    if sample == "--sample=quota":
+        book = Planner(2, 1, 1000)
+        seed(book, 4)
+        book.advance(0)
+        print("first=%d deferred=%d" % (len(book.done), book.deferred))
+    elif sample == "--sample=ack":
+        book = Planner(2, 1, 1000)
+        seed(book, 2)
+        book.advance(0)
+        book.confirm("srv-000", 10)
+        book.advance(5000)
+        print("skipped=%d done=%d" % (len(book.skipped), len(book.done)))
     elif sample == "--sample=dup":
-        plan, _ = build_plan([("srv-a", "shard-1", True), ("srv-a", "shard-1", True)], 3)
-        print("total=%d" % sum(len(batch) for batch in plan))
-    elif sample == "--sample=skip":
-        plan, skipped = build_plan([("srv-a", "shard-1", True), ("srv-b", "shard-1", False)], 3)
-        print("planned=%d skipped=%d" % (sum(len(batch) for batch in plan), len(skipped)))
+        book = Planner(2, 1, 1000)
+        book.register("r1", "srv-a", "shard-1", True)
+        book.register("r2", "srv-a", "shard-1", True)
+        print("queued=%d" % len(book.queued()))
     elif sample == "--sample=order":
-        plan, _ = build_plan([("srv-b", "shard-2", True), ("srv-a", "shard-1", True)], 3)
-        print("first=%s" % plan[0][0])
+        book = Planner(2, 1, 1000)
+        book.register("r1", "srv-b", "shard-2", True)
+        book.register("r2", "srv-a", "shard-1", True)
+        print("first=%s" % book.queued()[0])
     elif sample == "--sample=work":
-        scanned = 0
-        rows = servers(3000, confirmed=3000)
-        for _ in range(3000):
-            scanned += len(rows)
-            build_plan(rows, 500)
-        print("scanned=%d" % scanned)
+        book = Planner(500, 1, 1000)
+        seed(book, 1500)
+        for _ in range(1500):
+            book.advance(0)
+        print("scanned=%d" % book.scanned)
     else:
-        raise SystemExit("需要 --sample=batch|dup|skip|order|work")
-    plan, skipped = build_plan(servers(6, confirmed=4), 3)
-    write(os.path.join(HERE, "out", "plan.txt"), render(plan, skipped))
+        raise SystemExit("需要 --sample=quota|ack|dup|order|work")
+    plan = ["batch-0: %s" % ",".join(book.done[:5])] if book.done else []
+    write(os.path.join(HERE, "out", "plan.txt"), "\n".join(plan + ["skipped=%s" % ",".join(book.skipped)]) + "\n")
     return 0
 
 
